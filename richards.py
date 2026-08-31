@@ -31,7 +31,7 @@ def funcao_richards(t, K, A, B, M, V):
 # ==============================================================================
 # 2. CARREGAMENTO DOS DADOS
 # ==============================================================================
-nome_arquivo = "dados_sinteticos.csv"
+nome_arquivo = "dados_sinteticos-1.csv"
 
 try:
     df = pd.read_csv(nome_arquivo)
@@ -105,7 +105,7 @@ try:
     plt.figure(figsize=(10, 6))
     
     # Plota os dados reais como pontos dispersos
-    plt.scatter(t, y, color='blue', label='Dados Originais (Reais)', alpha=0.6, edgecolors='k')
+    plt.bar(t, y, color='blue', label='Dados Originais (Reais)', alpha=0.6, edgecolor='k')
     
     # Plota a linha da função de Richards ajustada
     # Criamos uma linha suave gerando mais pontos de tempo entre o min e max
