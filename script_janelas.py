@@ -4,6 +4,7 @@ import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
+from sklearn.metrics import r2_score
 import warnings
 import downloader_forex as fx
 
@@ -113,7 +114,6 @@ if __name__ == "__main__":
 
     while (inicio + tamanho_janela) <= len(valores_totais):
         fim = inicio + tamanho_janela
-        # Garante que a janela de futuro não ultrapasse o limite dos dados
         fim_futuro = min(fim + horizonte_predicao, len(valores_totais))
         
         y_atual = valores_totais[inicio:fim]
@@ -124,20 +124,21 @@ if __name__ == "__main__":
         
         plt.figure(figsize=(10, 5))
         
-        # Plota barras reais (Cinza para a base de ajuste, Azul claro para o período de validação/predição)
-        plt.bar(t_zerado, y_atual, color='lightgray', edgecolor='gray', label='Dados Reais (Ajuste)')
+        # Plota os DADOS REAIS como linha (cinza sólido para treino, azul para futuro)
+        plt.plot(t_zerado, y_atual, color='gray', linewidth=2, label='Dados Reais (Ajuste)')
         if len(y_futuro_real) > 0:
-            plt.bar(t_futuro, y_futuro_real, color='lightblue', edgecolor='steelblue', alpha=0.7, label='Dados Reais (Futuro)')
+            plt.plot(t_futuro, y_futuro_real, color='steelblue', linewidth=2, alpha=0.8, label='Dados Reais (Futuro)')
         
         if parametros is not None:
             K_opt, A_opt, B_opt, M_opt, V_opt = parametros
-            
-            # Curva de Ajuste (Base)
             y_fit = funcao_richards(t_zerado, *parametros)
+            
+            # Cálculo do R² para avaliar o ajuste da janela
+            r2 = r2_score(y_atual, y_fit)
+            
             plt.plot(t_zerado, y_fit, color='red', linewidth=3, label='Richards (Ajuste)')
             todos_ajustes.append((inicio, fim, y_fit))
             
-            # Curva de Predição (Futuro)
             if len(y_futuro_real) > 0:
                 y_pred = funcao_richards(t_futuro, *parametros)
                 plt.plot(t_futuro, y_pred, color='red', linewidth=2.5, linestyle='--', label='Richards (Predição)')
@@ -145,6 +146,7 @@ if __name__ == "__main__":
 
             print(f"\n✅ ONDA {num_janela} | Índices: [{inicio} a {fim-1}] ajustada com sucesso!")
             print("-" * 40)
+            print(f"  R² (Qualidade) = {r2:.4f} ({(r2*100):.2f}%)")
             print(f"  K (Teto)       = {K_opt:.5f}")
             print(f"  A (Chão)       = {A_opt:.5f}")
             print(f"  B (Velocidade) = {B_opt:.5f}")
@@ -152,13 +154,12 @@ if __name__ == "__main__":
             print(f"  V (Assimetria) = {V_opt:.5f}")
             print("-" * 40)
             
-            titulo = f"Onda {num_janela}: Ajuste [{inicio}:{fim-1}] | Predição [{fim}:{fim_futuro-1}]"
+            titulo = f"Onda {num_janela}: Ajuste [{inicio}:{fim-1}] | Predição [{fim}:{fim_futuro-1}] | R² = {r2:.2f}"
         else:
             print(f"\n❌ ONDA {num_janela} | Índices: [{inicio} a {fim-1}] - FALHA NO AJUSTE")
             titulo = f"Onda {num_janela}: Falha no Ajuste"
             
         plt.title(titulo, fontweight='bold')
-        # Eixo X dinâmico com o nome do timeframe
         plt.xlabel(f"Tempo em períodos ({timeframe}) - Resetado para 0")
         plt.ylabel("Valores")
         plt.legend(loc="best")
@@ -175,20 +176,19 @@ if __name__ == "__main__":
     print("\nExibindo panorama completo de todas as ondas e predições...")
     
     plt.figure(figsize=(14, 6))
-    plt.bar(tempo_total, valores_totais, color='lightgray', edgecolor='gray', label='Dados Históricos Reais')
     
-    # Plota as curvas de ajuste
+    # Linha contínua cinza para representar a série temporal original inteira
+    plt.plot(tempo_total, valores_totais, color='gray', linewidth=2, alpha=0.6, label='Dados Históricos Reais')
+    
     for i, (idx_inicio, idx_fim, y_fit_janela) in enumerate(todos_ajustes):
         t_original = tempo_total[idx_inicio:idx_fim]
         plt.plot(t_original, y_fit_janela, linewidth=2.5, label=f'Onda {i+1} (Ajuste)')
         plt.axvline(x=t_original[0], color='black', linestyle=':', alpha=0.4)
 
-    # Plota as curvas de predição
     for idx_inicio_pred, idx_fim_pred, y_pred_janela in todas_predicoes:
         t_pred = tempo_total[idx_inicio_pred:idx_fim_pred]
         plt.plot(t_pred, y_pred_janela, color='black', linewidth=2, linestyle='--', alpha=0.8)
     
-    # Adiciona uma entrada genérica na legenda para a predição para não poluir
     if todas_predicoes:
         plt.plot([], [], color='black', linewidth=2, linestyle='--', label='Predições Além da Janela')
 
