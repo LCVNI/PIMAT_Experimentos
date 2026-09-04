@@ -1,5 +1,5 @@
 #arquivos de dados
-#*.csv
+*.csv
 #ambientes virtuais
 .venv/
 venv/
