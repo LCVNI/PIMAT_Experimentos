@@ -1,0 +1,4 @@
+pandas
+dukascopy_python
+mplfinance
+pyarrow
