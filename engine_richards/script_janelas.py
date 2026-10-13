@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import curve_fit
 from sklearn.metrics import r2_score
 import warnings
-import downloader_forex as fx
+#import downloader_forex as fx
 
 warnings.filterwarnings('ignore')
 
@@ -80,18 +80,19 @@ if __name__ == "__main__":
     data_fim = input("Data fim (YYYYMMDD): ").strip()
 
     # Nome dinâmico
+    #TODO: Revisar tipo de arquivo, agora utilizamos .parquet
     nome_arquivo = f"{moeda1}_{moeda2}_{timeframe}_{data_inicio}_{data_fim}.csv"
     arquivo = Path(nome_arquivo)
-
+    '''
     # Verifica download
     if not arquivo.is_file():
         print(f"O arquivo {nome_arquivo} não existe! Iniciando download...")
         fx.baixar_forex(moeda1, moeda2, timeframe, data_inicio, data_fim)
-  
+    '''
     print("\n" + "=" * 60)
     print(f"ANÁLISE - JANELA: {tamanho_janela} | PREDIÇÃO: {horizonte_predicao} | TIMEFRAME: {timeframe}")
     print("=" * 60)
-
+    
     try:
         df = pd.read_csv(nome_arquivo)
         df.columns = [col.strip().lower() for col in df.columns]
