@@ -49,12 +49,26 @@ def extract_chunk(base_currency: str, quote_currency: str, chunk_start: datetime
         df = df.reset_index(names='timestamp')
         
     if is_inverted:
-        price_columns = [col for col in df.columns if col not in ['timestamp', 'ask_volume', 'bid_volume', 'volume']]
-        for col in price_columns:
-            df[col] = np.where(df[col] != 0, 1.0 / df[col], np.nan)
+        if 'bid' in df.columns and 'ask' in df.columns:
+            # 1. Troca os zeros (falha de liquidez) por NaN
+            df[['bid', 'ask']] = df[['bid', 'ask']].replace(0, np.nan)
             
-        if 'ask' in df.columns and 'bid' in df.columns:
+            # 2. Preenche gaps com o último preço conhecido (Forward Fill)
+            # E se o primeiro registro já for nulo, usa o próximo conhecido (Backward Fill)
+            df[['bid', 'ask']] = df[['bid', 'ask']].ffill().bfill()
+            
+            # 3. Inversão matemática segura
+            df['bid'] = 1.0 / df['bid']
+            df['ask'] = 1.0 / df['ask']
+            
+            # 4. Transpõe os nomes (cruzamento do spread)
             df.rename(columns={'ask': 'bid', 'bid': 'ask'}, inplace=True)
+        else:
+            # Fallback de segurança para outras colunas de preço caso o layout mude
+            price_columns = [col for col in df.columns if col not in ['timestamp', 'ask_volume', 'bid_volume', 'volume']]
+            for col in price_columns:
+                df[col] = df[col].replace(0, np.nan).ffill().bfill()
+                df[col] = 1.0 / df[col]
 
     df.to_parquet(output_file, engine='pyarrow', compression='snappy')
     print(f"     [+] Novo lote salvo: {filename} ({len(df)} ticks)")
@@ -75,7 +89,6 @@ def consolidate_parquet_files(base_currency: str, quote_currency: str, start_dat
     print(f"[*] {len(files_to_consolidate)} lotes encontrados em '{partials_dir.name}'. Consolidando...")
     
     try:
-        # CORREÇÃO: Argumento use_legacy_dataset removido
         dataset = pq.ParquetDataset(files_to_consolidate)
         df_consolidated = dataset.read().to_pandas()
         

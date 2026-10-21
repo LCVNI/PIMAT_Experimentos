@@ -1,59 +1,71 @@
 import pandas as pd
+import pyarrow.parquet as pq
 from pathlib import Path
 
 def validate_tick_data(file_path: Path):
-    print(f"\n[*] Iniciando auditoria no arquivo: {file_path.name}")
+    print(f"\n[*] Iniciando auditoria de alta performance no arquivo: {file_path.name}")
     
     try:
-        # 1. Carregar os dados brutos
-        df = pd.read_parquet(file_path)
+        # 1. Inspeção de Schema (Zero RAM)
+        # Lê apenas os metadados do Parquet para descobrir quais colunas existem
+        parquet_file = pq.ParquetFile(file_path)
+        colunas_disponiveis = parquet_file.schema.names
+        
+        # Mapeia dinamicamente apenas as colunas que importam
+        colunas_para_ler = ['timestamp']
+        if 'bid' in colunas_disponiveis: colunas_para_ler.append('bid')
+        elif 'bidPrice' in colunas_disponiveis: colunas_para_ler.append('bidPrice')
+        
+        if 'ask' in colunas_disponiveis: colunas_para_ler.append('ask')
+        elif 'askPrice' in colunas_disponiveis: colunas_para_ler.append('askPrice')
+        
+        for vol_col in ['bid_volume', 'ask_volume', 'bidVolume', 'askVolume', 'volume']:
+            if vol_col in colunas_disponiveis: colunas_para_ler.append(vol_col)
+            
+        # 2. Leitura Seletiva (Carrega apenas o essencial, economizando I/O e RAM)
+        df = pd.read_parquet(file_path, engine='pyarrow', columns=colunas_para_ler)
         total_linhas_iniciais = len(df)
         
-        # 2. Normalização (Adequando ao DoD do PIMAT e dados da Dukascopy)
-        # Verifica se precisa renomear (caso venha de outra fonte que não a Dukascopy)
-        renames = {}
-        if 'bidPrice' in df.columns: renames['bidPrice'] = 'bid'
-        if 'askPrice' in df.columns: renames['askPrice'] = 'ask'
-        if renames:
-            df = df.rename(columns=renames)
+        # Normalização de nomes
+        renames = {'bidPrice': 'bid', 'askPrice': 'ask'}
+        df.rename(columns={k: v for k, v in renames.items() if k in df.columns}, inplace=True)
             
-        # Tratamento de Volume (Dukascopy gera ask_volume e bid_volume)
+        # Tratamento de Volume vetorizado
         if 'bid_volume' in df.columns and 'ask_volume' in df.columns:
             df['volume'] = df['bid_volume'] + df['ask_volume']
         elif 'bidVolume' in df.columns and 'askVolume' in df.columns:
             df['volume'] = df['bidVolume'] + df['askVolume']
             
-        # Se o volume não existir por algum motivo, cria zerado para não quebrar o motor
         if 'volume' not in df.columns:
             df['volume'] = 0.0
             
-        # Filtra estritamente para as 4 colunas exigidas
         colunas_exigidas = ['timestamp', 'ask', 'bid', 'volume']
         
-        # Garante que as colunas existem antes de filtrar
         for col in colunas_exigidas:
             if col not in df.columns:
-                print(f"[!] Erro fatal: Coluna essencial '{col}' não encontrada no arquivo.")
+                print(f"[!] Erro fatal: Coluna essencial '{col}' ausente.")
                 return False
                 
+        # Descarta as colunas de volume antigas liberando RAM
         df = df[colunas_exigidas]
         
-        # 3. Verificação de Valores Nulos (NaN)
-        nulos = df.isnull().sum().sum()
-        if nulos > 0:
-            print(f"  [!] Anomalia: {nulos} valores nulos detectados. Limpando...")
-            df = df.dropna()
+        # 3. Limpeza de Nulos (In-place para economizar memória)
+        if df.isnull().any().any():
+            linhas_antes = len(df)
+            df.dropna(inplace=True)
+            print(f"  [!] Anomalia: {linhas_antes - len(df)} linhas com valores nulos removidas.")
             
-        # 4. Verificação de Spread Invertido (Bid > Ask)
-        spread_invertido = df[df['bid'] > df['ask']]
-        if not spread_invertido.empty:
-            print(f"  [!] Anomalia: {len(spread_invertido)} ticks com spread invertido (Bid > Ask). Expurgando...")
-            df = df.drop(spread_invertido.index)
+        # 4. Filtragem Vetorizada de Spread Invertido (Substitui o lento .drop())
+        linhas_antes_spread = len(df)
+        df = df[df['ask'] >= df['bid']] # Mantém apenas o que é válido logicamente
+        removidos_spread = linhas_antes_spread - len(df)
+        if removidos_spread > 0:
+            print(f"  [!] Anomalia: {removidos_spread} ticks com spread invertido expurgados.")
             
-        # 5. Verificação de Ordenação Cronológica
+        # 5. Verificação de Ordenação Cronológica (In-place)
         if not df['timestamp'].is_monotonic_increasing:
-            print("  [!] Anomalia: Timestamps fora de ordem cronológica. Reordenando...")
-            df = df.sort_values('timestamp')
+            print("  [!] Anomalia: Timestamps desordenados. Reordenando de forma otimizada...")
+            df.sort_values('timestamp', inplace=True)
             
         # 6. Geração do Arquivo Final Validado
         linhas_finais = len(df)
@@ -61,60 +73,18 @@ def validate_tick_data(file_path: Path):
         
         clean_path = file_path.parent / f"{file_path.stem}_clean.parquet"
         
-        # Otimização para Big Data: garante que timestamp continue sendo datetime
+        # Mantém compressão snappy nativa
         df.to_parquet(clean_path, engine='pyarrow', compression='snappy')
         
         if linhas_removidas > 0:
-            print(f"  [+] Limpeza concluída. {linhas_removidas} anomalias removidas.")
+            print(f"  [+] Limpeza concluída. {linhas_removidas} anomalias removidas no total.")
         else:
-            print("  [+] Integridade verificada. Nenhuma anomalia matemática encontrada.")
+            print("  [+] Integridade verificada. Nenhuma anomalia encontrada.")
             
-        print(f"  [+] Arquivo final formatado salvo em: {clean_path.name}")
-        print(f"  [*] Registro validado: {linhas_finais} ticks operacionais.")
+        print(f"  [+] Arquivo validado salvo em: {clean_path.name}")
+        print(f"  [*] Registros finais: {linhas_finais} ticks operacionais.")
         return True
         
     except Exception as e:
         print(f"[!] Erro crítico ao processar o arquivo {file_path.name}: {e}")
         return False
-
-def menu_selecao_arquivo(diretorio: Path):
-    """Busca arquivos Parquet no diretório e permite ao usuário escolher qual limpar."""
-    if not diretorio.exists():
-        print(f"[!] O diretório '{diretorio}' não existe.")
-        return
-        
-    # Busca arquivos parquet, ignorando os que já tem '_clean' para não limpar duas vezes
-    arquivos = [f for f in diretorio.glob("*.parquet") if "_clean" not in f.name and "parciais" not in f.parts]
-    
-    if not arquivos:
-        print(f"[!] Nenhum arquivo Parquet bruto encontrado na pasta '{diretorio}'.")
-        return
-        
-    print(f"\n[*] Arquivos disponíveis para limpeza em '{diretorio}':")
-    for i, arquivo in enumerate(arquivos):
-        print(f"  [{i}] {arquivo.name}")
-        
-    print(f"  [{len(arquivos)}] Limpar TODOS os arquivos listados")
-    
-    try:
-        escolha = int(input("\nDigite o número do arquivo que deseja auditar/limpar: "))
-        if escolha == len(arquivos):
-            for arq in arquivos:
-                validate_tick_data(arq)
-        elif 0 <= escolha < len(arquivos):
-            validate_tick_data(arquivos[escolha])
-        else:
-            print("[!] Opção inválida.")
-    except ValueError:
-        print("[!] Entrada inválida. Digite um número.")
-
-if __name__ == "__main__":
-    print("="*60)
-    print(" Auditoria e Limpeza de Dados Forex (PIMAT DoD) ")
-    print("="*60)
-    
-    dir_padrao = Path("data/forex")
-    dir_input = input(f"Diretório dos arquivos (Enter para '{dir_padrao}'): ").strip()
-    
-    diretorio_alvo = Path(dir_input) if dir_input else dir_padrao
-    menu_selecao_arquivo(diretorio_alvo)
